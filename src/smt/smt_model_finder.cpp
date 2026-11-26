@@ -399,6 +399,8 @@ namespace smt {
             // It is only safe to use this constant for infinite sorts.
             obj_map<sort, app*>       m_sort2k;
             expr_ref_vector           m_ks; // range of m_sort2k
+            obj_hashtable<expr>       m_default_elems; // elements that only make an instantiation set non-empty
+            expr_ref_vector           m_default_elems_pin;
 
             // Support for evaluating expressions in the current model.
             proto_model*              m_model{ nullptr };
@@ -466,6 +468,7 @@ namespace smt {
                 m_bv(m),
                 m_array(m),
                 m_ks(m),
+                m_default_elems_pin(m),
                 m_eval_cache_range(m),
                 m_rand(static_cast<unsigned>(m.limit().count())) {
                 m.limit().inc();
@@ -487,6 +490,8 @@ namespace smt {
                 m_A_f_is.reset();
                 m_root_nodes.reset();
                 reset_sort2k();
+                m_default_elems.reset();
+                m_default_elems_pin.reset();
             }
 
             void set_specrels(context& c) {
@@ -990,6 +995,13 @@ namespace smt {
                 }
             }
 
+            void add_default_elem(expr* e) {
+                if (!m_default_elems.contains(e)) {
+                    m_default_elems.insert(e);
+                    m_default_elems_pin.push_back(e);
+                }
+            }
+
             void add_elem_to_empty_inst_sets() {
                 obj_map<sort, expr*> sort2elems;
                 ptr_vector<node> need_fresh;
@@ -1006,7 +1018,9 @@ namespace smt {
                         //
                         sort* ns = n->get_sort();
                         if (m.is_fully_interp(ns)) {
-                            n->insert(m_model->get_some_value(ns), 0);
+                            expr* e = m_model->get_some_value(ns);
+                            add_default_elem(e);
+                            n->insert(e, 0);
                         }
                         else {
                             need_fresh.push_back(n);
@@ -1025,6 +1039,7 @@ namespace smt {
                         trail.push_back(e);
                         sort2elems.insert(s, e);
                     }
+                    add_default_elem(e);
                     n->insert(e, 0);
                     TRACE(model_finder, tout << "fresh constant: " << mk_pp(e, m) << "\n";);
                 }
@@ -1146,6 +1161,10 @@ namespace smt {
             bool is_default_representative(expr* t) {
                 app* tt = nullptr;
                 return t && m_sort2k.find(t->get_sort(), tt) && (tt == t);
+            }
+
+            bool is_default_elem(expr* t) const {
+                return m_default_elems.contains(t);
             }
         };
 
@@ -2630,16 +2649,18 @@ namespace smt {
     mf::instantiation_set const* model_finder::get_uvar_inst_set(quantifier* q, unsigned i) {
         quantifier* flat_q = get_flat_quantifier(q);
         SASSERT(flat_q->get_num_decls() >= q->get_num_decls());
-        mf::instantiation_set const* r = m_auf_solver->get_uvar_inst_set(flat_q, flat_q->get_num_decls() - q->get_num_decls() + i);
+        // The variables of q come first in flat_q, so the variables of the nested quantifiers have the lower indices.
+        unsigned flat_i = flat_q->get_num_decls() - q->get_num_decls() + i;
+        mf::instantiation_set const* r = m_auf_solver->get_uvar_inst_set(flat_q, flat_i);
         TRACE(model_finder, tout << "q: #" << q->get_id() << "\n" << mk_pp(q, m) << "\nflat_q: " << mk_pp(flat_q, m)
-            << "\ni: " << i << " " << flat_q->get_num_decls() - q->get_num_decls() + i << "\n";);
+            << "\ni: " << i << " " << flat_i << "\n";);
         if (r != nullptr)
             return r;
         // quantifier was not processed by AUF solver...
         // it must have been satisfied by "macro"/"hint".
         quantifier_info* qinfo = get_quantifier_info(q);
         SASSERT(qinfo);
-        return qinfo->get_macro_based_inst_set(i, m_context, *(m_auf_solver.get()));
+        return qinfo->get_macro_based_inst_set(flat_i, m_context, *(m_auf_solver.get()));
     }
 
     /**
@@ -2656,6 +2677,8 @@ namespace smt {
         
         expr* t = s->get_inv(val, mdl);
         if (m_auf_solver->is_default_representative(t))
+            return val;
+        if (t && m_auf_solver->is_default_elem(t))
             return val;
         if (t != nullptr) {
             generation = s->get_generation(t);
@@ -2679,11 +2702,11 @@ namespace smt {
         // Since we only care about q (and its bindings), it only makes sense to restrict the variables of q.
         bool asserted_something = false;
         unsigned num_decls = q->get_num_decls();
-        // Remark: sks were created for the flat version of q.  
+        // Remark: sks were created for the flat version of q, whose first declarations are those of q.
         SASSERT(get_flat_quantifier(q)->get_num_decls() == sks.size());
         SASSERT(sks.size() >= num_decls);
         for (unsigned i = 0; i < num_decls; ++i) {
-            expr *sk = sks.get(sks.size() - i - 1);
+            expr *sk = sks.get(num_decls - i - 1);
             instantiation_set const* s = get_uvar_inst_set(q, i);
             if (s == nullptr)
                 continue; // nothing to do

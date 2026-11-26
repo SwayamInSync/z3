@@ -247,6 +247,56 @@ static void check_mbqi_division_by_zero() {
         "(check-sat)\n", "unsat\n");
 }
 
+struct scoped_no_ematching {
+    std::string m_old;
+    scoped_no_ematching(): m_old(gparams::get_value("smt.ematching")) {
+        gparams::set("smt.ematching", "false");
+    }
+    ~scoped_no_ematching() {
+        gparams::set("smt.ematching", m_old.c_str());
+    }
+};
+
+static void check_mbqi_nested_quantifier_variables() {
+    // The model checker makes its skolem constants for the flat quantifier.
+    // The instantiation set of a variable of the outer quantifier restricts
+    // the constant of that variable, not one of a nested quantifier.
+    check_recfun_output(
+        "(set-option :rlimit 20000000)\n"
+        "(declare-fun R (Int) Bool)\n"
+        "(assert (forall ((x Int)) (! (= (R x) (or (= x 30)\n"
+        "  (exists ((y Int)) (! (and (or (= y (+ x 1)) (= y (* 2 x))) (R y)) :weight 0))))\n"
+        "  :weight 0)))\n"
+        "(assert (not (R 1)))\n"
+        "(check-sat)\n", "unsat\n");
+    // An element that only makes an instantiation set non-empty stands for
+    // the value of the counter-example in an instance.
+    scoped_no_ematching _no_ematching;
+    check_recfun_output(
+        "(set-option :rlimit 20000000)\n"
+        "(declare-fun f (Int) Int)\n"
+        "(declare-const c Int)\n"
+        "(declare-const b (Array Int Int))\n"
+        "(assert (forall ((x (Array Int Int))) (! (and\n"
+        "  (forall ((y Int)) (! (< (f c) (select x y)) :weight 0))\n"
+        "  (not (= (f c) (select x 4)))) :weight 0)))\n"
+        "(assert (< (select b 1) (select b 5)))\n"
+        "(check-sat)\n", "unsat\n");
+    // The reproducer of #8563: no ill-sorted restriction.
+    check_recfun_output(
+        "(declare-sort d 0)\n"
+        "(declare-sort od 0)\n"
+        "(declare-sort h 0)\n"
+        "(declare-fun c () d)\n"
+        "(declare-fun hp (h) d)\n"
+        "(declare-fun hd0 (h od) Bool)\n"
+        "(declare-fun hd1 (h od) Bool)\n"
+        "(push)\n"
+        "(assert (forall ((H_1 h) (D_2 od)) (=> (hd0 H_1 D_2) (forall ((H_3 h)) (= (hp H_3) c)))))\n"
+        "(assert (not (forall ((H_8 h) (D_9 od)) (=> (hd1 H_8 D_9) (forall ((H_10 h)) (= (hp H_10) c))))))\n"
+        "(check-sat)\n", "sat\n");
+}
+
 static void check_mbqi_lambda_arrays() {
     ast_manager m;
     reg_decl_plugins(m);
@@ -1823,6 +1873,7 @@ void tst_smt_context()
     check_recfun_rlimits();
     check_recfun_unfold_limit();
     check_mbqi_division_by_zero();
+    check_mbqi_nested_quantifier_variables();
     check_mbqi_lambda_arrays();
     check_special_relation_logic();
     check_nonlinear_to_int();
