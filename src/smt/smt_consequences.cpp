@@ -54,11 +54,27 @@ namespace smt {
         expr* e = bool_var2expr(lit.var());
         TRACE(context, tout << mk_pp(e, m) << "\n";);
         index_set s;
-        if (assumptions.contains(lit.var())) {
+        if (assumptions.contains(lit.var()) || m_theory_assumption_vars.contains(lit.var())) {
             s.insert(lit.var());
         }
         else {
             justify(lit, s);
+        }
+        // What is fixed only under an assumption that a theory added for this
+        // search (the unfolding limit of recursive functions) is not a
+        // consequence of the user's assumptions. The variable stays open and
+        // the theory assumptions it rests on are recorded: the caller lets
+        // the theory relax them and searches again.
+        if (depends_on_theory_assumptions(s)) {
+            bool open_var = m_var2val.contains(e);
+            if (!lit.sign() && m.is_eq(e, e1, e2))
+                open_var |= (m_var2val.contains(e2) && m.is_value(e1)) || (m_var2val.contains(e1) && m.is_value(e2));
+            if (!lit.sign() && dt.is_recognizer(e, arg))
+                open_var |= m_var2val.contains(arg);
+            if (open_var)
+                add_theory_core(s);
+            m_antecedents.insert(lit.var(), std::move(s));
+            return;
         }
         bool found = false;
         if (m_var2val.contains(e)) {
@@ -94,6 +110,19 @@ namespace smt {
             conseq.push_back(fml);
         }
         m_antecedents.insert(lit.var(), std::move(s));
+    }
+
+    bool context::depends_on_theory_assumptions(index_set const& s) const {
+        for (unsigned v : s)
+            if (m_theory_assumption_vars.contains(v))
+                return true;
+        return false;
+    }
+
+    void context::add_theory_core(index_set const& s) {
+        for (unsigned v : s)
+            if (m_theory_assumption_vars.contains(v) && !m_conseq_unknown.contains(bool_var2expr(v)))
+                m_conseq_unknown.push_back(bool_var2expr(v));
     }
 
     void context::justify(literal lit, index_set& s) {
@@ -238,6 +267,10 @@ namespace smt {
                     s |= m_antecedents.find(lit.var());
                 }
                 
+                if (depends_on_theory_assumptions(s)) {
+                    add_theory_core(s);
+                    continue;
+                }
                 fml = m.mk_eq(m_var2orig.find(k), v);
                 fml = m.mk_implies(antecedent2fml(s), fml);
                 conseq.push_back(fml);
@@ -284,6 +317,8 @@ namespace smt {
                 warning_msg(msg.c_str());
                 throw default_exception(msg.c_str());
             }
+        m_theory_assumption_vars.reset();
+        m_conseq_unknown.reset();
         m_antecedents.reset();
         m_antecedents.insert(true_literal.var(), index_set());
         pop_to_base_lvl();
@@ -370,19 +405,57 @@ namespace smt {
             }
         }
         unsigned num_units = 0;
-        extract_fixed_consequences(num_units, _assumptions, conseq);
         app_ref eq(m);
-        TRACE(context, 
-              tout << "vars: " << vars.size() << "\n";
-              tout << "lits: " << num_units << "\n";);
         pop_to_base_lvl();
         m_case_split_queue->init_search_eh();
         unsigned num_iterations = 0;
         unsigned num_fixed_eqs = 0;
         unsigned chunk_size = 100; 
 
-        init_assumptions(assumptions);
-        num_units = 0;
+        // A theory may add assumptions of its own to a search (the unfolding
+        // limit of recursive functions). The search needs them, but what is
+        // fixed only under them is not a consequence of the user's
+        // assumptions. When a variable is fixed that way, the theory relaxes
+        // the assumptions it rests on, as it does for an unsat core in
+        // check(), and the search starts again.
+        auto start_search = [&]() {
+            pop_to_base_lvl();
+            m_conflict = null_b_justification;
+            m_not_l = null_literal;
+            m_theory_assumption_vars.reset();
+            m_conseq_unknown.reset();
+            m_antecedents.reset();
+            m_antecedents.insert(true_literal.var(), index_set());
+            expr_ref_vector asms(assumptions);
+            add_theory_assumptions(asms);
+            init_assumptions(asms);
+            for (unsigned i = assumptions.size(); i < asms.size(); ++i)
+                if (b_internalized(asms.get(i)))
+                    m_theory_assumption_vars.insert(get_literal(asms.get(i)).var());
+            num_units = 0;
+            propagate();
+            return !inconsistent();
+        };
+        // returns false if the theories cannot relax what a variable rests on.
+        auto extract = [&]() {
+            extract_fixed_consequences(num_units, _assumptions, conseq);
+            num_fixed_eqs += extract_fixed_eqs(conseq);
+            while (!m_conseq_unknown.empty()) {
+                m_unsat_core.reset();
+                for (expr* a : m_conseq_unknown)
+                    m_unsat_core.push_back(a);
+                if (!should_research(l_false) || !start_search())
+                    return false;
+                extract_fixed_consequences(num_units, _assumptions, conseq);
+                num_fixed_eqs += extract_fixed_eqs(conseq);
+            }
+            return true;
+        };
+        if (!start_search() || !extract())
+            return l_undef;
+        TRACE(context, 
+              tout << "vars: " << vars.size() << "\n";
+              tout << "lits: " << num_units << "\n";);
 
         while (!m_var2val.empty()) {
             unsigned num_vars = 0;
@@ -439,8 +512,8 @@ namespace smt {
                 TRACE(context, display(tout););
                 delete_unfixed(unfixed);
             }
-            extract_fixed_consequences(num_units, _assumptions, conseq);
-            num_fixed_eqs += extract_fixed_eqs(conseq);
+            if (!extract())
+                return l_undef;
             IF_VERBOSE(1, display_consequence_progress(verbose_stream(), num_iterations, m_var2val.size(), conseq.size(),
                                                        unfixed.size(), num_fixed_eqs););
             TRACE(context, display_consequence_progress(tout, num_iterations, m_var2val.size(), conseq.size(),
