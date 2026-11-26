@@ -343,6 +343,30 @@ static void check_recfun_unfold_limit() {
         "(f 0)\n");
 }
 
+static void check_recfun_lazy_depth_limit() {
+    // The claim follows from the induction hypothesis at n - 2 by parity.
+    // The depth limit on (even (- n 2)) implies n <= 2. A refutation that
+    // uses this bound names the limit in the unsat core, and the solver
+    // unfolds deeper in every round without end.
+    check_recfun_output(
+        "(set-option :timeout 20000)\n"
+        "(declare-fun n () Int)\n"
+        "(define-funs-rec ((odd ((x Int)) Bool) (even ((x Int)) Bool))\n"
+        "  ((ite (<= x 0) false (even (- x 1)))\n"
+        "   (ite (<= x 0) true (odd (- x 1)))))\n"
+        "(assert (>= n 0))\n"
+        "(assert (forall ((k Int)) (=> (and (>= k 0) (< k n)) (= (even k) (= k (* 2 (div k 2)))))))\n"
+        "(assert (not (= (even n) (= n (* 2 (div n 2))))))\n"
+        "(check-sat)\n", "unsat\n");
+    // A model that needs unfoldings below the cutoff is still found.
+    check_recfun_output(
+        "(define-fun-rec len ((x Int)) Int (ite (<= x 0) 0 (+ 1 (len (- x 1)))))\n"
+        "(declare-fun k () Int)\n"
+        "(assert (= (len k) 40))\n"
+        "(check-sat)\n"
+        "(get-value (k))\n", "sat\n((k 40))\n");
+}
+
 static void check_qe2_false_answer() {
     // qe2 reports a false answer as false, not as false under re-bound variables.
     check_recfun_output(
@@ -1822,6 +1846,7 @@ void tst_smt_context()
     check_lp_cancellation_recovery();
     check_recfun_rlimits();
     check_recfun_unfold_limit();
+    check_recfun_lazy_depth_limit();
     check_mbqi_division_by_zero();
     check_mbqi_lambda_arrays();
     check_special_relation_logic();
