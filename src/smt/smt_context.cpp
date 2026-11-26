@@ -4376,6 +4376,13 @@ namespace smt {
             return FC_CONTINUE;
         }
 
+        for (theory* th : m_theory_set) {
+            if (th->final_check_last_eh() == FC_CONTINUE) {
+                TRACE(final_check_step, tout << "last final check '" << th->get_name() << "': continue\n";);
+                return FC_CONTINUE;
+            }
+        }
+
         SASSERT(result != FC_DONE || check_th_diseq_propagation());
         TRACE(final_check_step, tout << "RESULT final_check: " << result << "\n";);
         if (result == FC_GIVEUP && f != OK)

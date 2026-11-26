@@ -320,6 +320,16 @@ namespace smt {
         }
 
         /**
+           \brief Called by the context when every theory and the quantifier
+           manager accept the current assignment. A theory that only wants to
+           exclude candidate models adds its constraints here and returns
+           FC_CONTINUE.
+        */
+        virtual final_check_status final_check_last_eh() {
+            return FC_DONE;
+        }
+
+        /**
         * \brief This method signals the number of priority levels a theory supports for final checks.
         * The first level are for the cheapest final check invocations.
         * The levels after that are for more expensive final checks.
