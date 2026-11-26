@@ -136,6 +136,10 @@ bool static_features::is_diff_atom(expr const * e) const {
     expr * rhs = to_app(e)->get_arg(1);
     if (!is_arith_expr(lhs) && !is_arith_expr(rhs) && !m.is_ite(lhs) && !m.is_ite(rhs)) 
         return true;    
+    // an equality 'x = (+ k y)' that the rewriter leaves as it is written.
+    rational k1, k2;
+    if (m.is_eq(e) && !m.is_ite(lhs) && !m.is_ite(rhs) && is_diff_term(lhs, k1) && is_diff_term(rhs, k2))
+        return true;
     if (!is_numeral(rhs)) 
         return false;    
     // lhs can be 'x' or '(+ x (* -1 y))' or '(+ (* -1 x) y)'
@@ -252,13 +256,18 @@ void static_features::update_core(expr * e) {
     }
     if (_is_eq) {
         m_num_eqs++;
-        if (is_numeral(to_app(e)->get_arg(1))) {
-            acc_num(to_app(e)->get_arg(1));
+        // An equality is arithmetical when a side is a numeral or an arithmetical
+        // term, whichever side the rewriter keeps the terms on: 'x = (* y z)' is
+        // as far from difference logic as '(+ x (* -1 (* y z))) = 0'.
+        expr * lhs = to_app(e)->get_arg(0), * rhs = to_app(e)->get_arg(1);
+        if (is_numeral(rhs) || is_arith_expr(lhs) || is_arith_expr(rhs)) {
+            if (is_numeral(rhs))
+                acc_num(rhs);
             m_num_arith_eqs++;
             TRACE(diff_atom, tout << "diff_atom: " << is_diff_atom(e) << "\n" << mk_pp(e, m) << "\n";);
             if (is_diff_atom(e))
                 m_num_diff_eqs++;
-            if (!is_arith_expr(to_app(e)->get_arg(0)))
+            if (is_numeral(rhs) && !is_arith_expr(lhs))
                 m_num_simple_eqs++;
         }
         sort * s      = to_app(e)->get_arg(0)->get_sort();

@@ -343,6 +343,22 @@ static void check_recfun_unfold_limit() {
         "(f 0)\n");
 }
 
+static void check_nonlinear_equality_setup() {
+    // An equality with a product on one side is not difference logic,
+    // whichever side the rewriter keeps the product on. Taken for difference
+    // logic, the problem gets a solver that gives up on the products.
+    check_recfun_output(
+        "(declare-fun a () Int)\n"
+        "(declare-fun b () Int)\n"
+        "(declare-fun f (Int Int) Int)\n"
+        "(assert (> a 0))\n"
+        "(assert (> b 0))\n"
+        "(assert (or (< b 0) (= (f a b) (* a b))))\n"
+        "(assert (or (< a 0) (= (f (- b 1) a) (* (- b 1) a))))\n"
+        "(assert (not (and (>= (f a b) 0) (< (f (- b 1) a) (f a b)))))\n"
+        "(check-sat)\n", "unsat\n");
+}
+
 static void check_qe2_false_answer() {
     // qe2 reports a false answer as false, not as false under re-bound variables.
     check_recfun_output(
@@ -1822,6 +1838,7 @@ void tst_smt_context()
     check_lp_cancellation_recovery();
     check_recfun_rlimits();
     check_recfun_unfold_limit();
+    check_nonlinear_equality_setup();
     check_mbqi_division_by_zero();
     check_mbqi_lambda_arrays();
     check_special_relation_logic();
