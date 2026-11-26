@@ -269,6 +269,7 @@ namespace smt {
 
     static bool is_in_diff_logic(static_features const & st) {
         return 
+            st.m_num_non_linear == 0 &&
             st.m_num_arith_eqs == st.m_num_diff_eqs && 
             st.m_num_arith_terms == st.m_num_diff_terms && 
             st.m_num_arith_ineqs == st.m_num_diff_ineqs;
