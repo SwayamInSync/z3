@@ -4377,9 +4377,18 @@ namespace smt {
         }
 
         for (theory* th : m_theory_set) {
-            if (th->final_check_last_eh() == FC_CONTINUE) {
+            switch (th->final_check_last_eh()) {
+            case FC_CONTINUE:
                 TRACE(final_check_step, tout << "last final check '" << th->get_name() << "': continue\n";);
                 return FC_CONTINUE;
+            case FC_GIVEUP:
+                result = FC_GIVEUP;
+                f = THEORY;
+                if (!m_incomplete_theories.contains(th))
+                    m_incomplete_theories.push_back(th);
+                break;
+            case FC_DONE:
+                break;
             }
         }
 

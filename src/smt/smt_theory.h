@@ -320,10 +320,12 @@ namespace smt {
         }
 
         /**
-           \brief Called by the context when every theory and the quantifier
-           manager accept the current assignment. A theory that only wants to
-           exclude candidate models adds its constraints here and returns
-           FC_CONTINUE.
+           \brief Called at the end of a final check in which no theory and
+           not the quantifier manager asked to continue (some may have given
+           up). Model-based quantifier instantiation runs later, when the
+           search restarts. A theory that wants to exclude the assignment as a
+           model adds constraints that the assignment violates and returns
+           FC_CONTINUE; FC_GIVEUP makes the final check give up.
         */
         virtual final_check_status final_check_last_eh() {
             return FC_DONE;
