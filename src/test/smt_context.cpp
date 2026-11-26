@@ -269,8 +269,20 @@ static void check_mbqi_nested_quantifier_variables() {
         "  :weight 0)))\n"
         "(assert (not (R 1)))\n"
         "(check-sat)\n", "unsat\n");
-    // The reproducer of #8563: no ill-sorted restriction.
+    // An element that only makes an instantiation set non-empty stands for
+    // the value of the counter-example in an instance.
     scoped_no_ematching _no_ematching;
+    check_recfun_output(
+        "(set-option :rlimit 20000000)\n"
+        "(declare-fun f (Int) Int)\n"
+        "(declare-const c Int)\n"
+        "(declare-const b (Array Int Int))\n"
+        "(assert (forall ((x (Array Int Int))) (! (and\n"
+        "  (forall ((y Int)) (! (< (f c) (select x y)) :weight 0))\n"
+        "  (not (= (f c) (select x 4)))) :weight 0)))\n"
+        "(assert (< (select b 1) (select b 5)))\n"
+        "(check-sat)\n", "unsat\n");
+    // The reproducer of #8563: no ill-sorted restriction.
     check_recfun_output(
         "(declare-sort d 0)\n"
         "(declare-sort od 0)\n"
