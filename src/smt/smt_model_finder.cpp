@@ -399,6 +399,8 @@ namespace smt {
             // It is only safe to use this constant for infinite sorts.
             obj_map<sort, app*>       m_sort2k;
             expr_ref_vector           m_ks; // range of m_sort2k
+            obj_hashtable<expr>       m_default_elems; // elements that only make an instantiation set non-empty
+            expr_ref_vector           m_default_elems_pin;
 
             // Support for evaluating expressions in the current model.
             proto_model*              m_model{ nullptr };
@@ -466,6 +468,7 @@ namespace smt {
                 m_bv(m),
                 m_array(m),
                 m_ks(m),
+                m_default_elems_pin(m),
                 m_eval_cache_range(m),
                 m_rand(static_cast<unsigned>(m.limit().count())) {
                 m.limit().inc();
@@ -487,6 +490,8 @@ namespace smt {
                 m_A_f_is.reset();
                 m_root_nodes.reset();
                 reset_sort2k();
+                m_default_elems.reset();
+                m_default_elems_pin.reset();
             }
 
             void set_specrels(context& c) {
@@ -990,6 +995,13 @@ namespace smt {
                 }
             }
 
+            void add_default_elem(expr* e) {
+                if (!m_default_elems.contains(e)) {
+                    m_default_elems.insert(e);
+                    m_default_elems_pin.push_back(e);
+                }
+            }
+
             void add_elem_to_empty_inst_sets() {
                 obj_map<sort, expr*> sort2elems;
                 ptr_vector<node> need_fresh;
@@ -1006,7 +1018,9 @@ namespace smt {
                         //
                         sort* ns = n->get_sort();
                         if (m.is_fully_interp(ns)) {
-                            n->insert(m_model->get_some_value(ns), 0);
+                            expr* e = m_model->get_some_value(ns);
+                            add_default_elem(e);
+                            n->insert(e, 0);
                         }
                         else {
                             need_fresh.push_back(n);
@@ -1025,6 +1039,7 @@ namespace smt {
                         trail.push_back(e);
                         sort2elems.insert(s, e);
                     }
+                    add_default_elem(e);
                     n->insert(e, 0);
                     TRACE(model_finder, tout << "fresh constant: " << mk_pp(e, m) << "\n";);
                 }
@@ -1146,6 +1161,10 @@ namespace smt {
             bool is_default_representative(expr* t) {
                 app* tt = nullptr;
                 return t && m_sort2k.find(t->get_sort(), tt) && (tt == t);
+            }
+
+            bool is_default_elem(expr* t) const {
+                return m_default_elems.contains(t);
             }
         };
 
@@ -2658,6 +2677,8 @@ namespace smt {
         
         expr* t = s->get_inv(val, mdl);
         if (m_auf_solver->is_default_representative(t))
+            return val;
+        if (t && m_auf_solver->is_default_elem(t))
             return val;
         if (t != nullptr) {
             generation = s->get_generation(t);
