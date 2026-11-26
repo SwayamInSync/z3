@@ -39,6 +39,10 @@ namespace smt {
 
         // book-keeping for depth of predicates
         expr_ref_vector          m_disabled_guards;
+        expr_ref                 m_limit;           // the depth limit applies to the disabled guards
+        expr_ref_vector          m_assumptions;     // one assumption per guard disabled in an earlier round
+        obj_map<expr, expr*>     m_guard2assumption;
+        obj_map<expr, expr*>     m_assumption2guard;
         expr_ref_vector          m_enabled_guards;
         obj_map<expr, expr_ref_vector*> m_guard2pending;
         obj_map<expr, unsigned>  m_pred_depth;
@@ -77,6 +81,7 @@ namespace smt {
         literal mk_literal(expr* e);
 
         void disable_guard(expr* guard, expr_ref_vector const& guards);
+        expr* limit();
         unsigned get_depth(expr* e);
         void set_depth(unsigned d, expr* e);
         void set_depth_rec(unsigned d, expr* e);
@@ -93,6 +98,7 @@ namespace smt {
         void relevant_eh(expr * n) override;
         char const * get_name() const override;
         final_check_status final_check_eh(unsigned) override;
+        final_check_status final_check_last_eh() override;
         void assign_eh(bool_var v, bool is_true) override;
         void push_scope_eh() override;
         void pop_scope_eh(unsigned num_scopes) override;

@@ -33,6 +33,8 @@ namespace smt {
           m_plugin(*reinterpret_cast<recfun::decl::plugin*>(m.get_plugin(get_family_id()))),
           m_util(m_plugin.u()), 
           m_disabled_guards(m),
+          m_limit(m),
+          m_assumptions(m),
           m_enabled_guards(m),
           m_preds(m) {
         }
@@ -88,6 +90,10 @@ namespace smt {
         m_stats.reset();
         theory::reset_eh();
         m_disabled_guards.reset();
+        m_limit = nullptr;
+        m_assumptions.reset();
+        m_guard2assumption.reset();
+        m_assumption2guard.reset();
         m_enabled_guards.reset();
         for (auto & kv : m_guard2pending) 
             dealloc(kv.m_value);
@@ -139,8 +145,12 @@ namespace smt {
         // Yield to the context's resource checks before processing newly queued expansions.
         for (unsigned end = m_propagation_queue.size(); m_qhead < end && !ctx.inconsistent(); ++m_qhead) {
             auto& p = *m_propagation_queue[m_qhead];
-            if (p.is_guard()) 
+            if (p.is_guard()) {
                 activate_guard(p.guard(), *m_guard2pending[p.guard()]);
+                // the guard got no body if it was assigned while it was disabled.
+                if (ctx.get_assignment(mk_literal(p.guard())) == l_true)
+                    push_body_expand(p.guard());
+            }
             else if (p.is_core()) 
                 block_core(p.core());
             else if (p.is_case()) 
@@ -156,19 +166,51 @@ namespace smt {
     }
 
 
+    expr* theory_recfun::limit() {
+        if (!m_limit) {
+            m_limit = m.mk_fresh_const("recfun-limit", m.mk_bool_sort());
+            // prefer the search that does not use the limit.
+            ctx.force_phase(~mk_literal(m_limit));
+        }
+        return m_limit;
+    }
+
     /**
-     * make clause `depth_limit => ~guard`
-     * the guard appears at a depth below the current cutoff.
+     * the guard appears at a depth below the current cutoff: it gets neither
+     * its definition nor a body.
+     *
+     * The depth limit is lazy. The clauses are
+     *   `limit & round_k => ~guard`      for the round that disables the guard,
+     *                                    added here,
+     *   `limit & assumption => ~guard`   for the later rounds, added by
+     *                                    should_research,
+     * where `limit` is a literal that no round assumes. They take effect when
+     * final_check_last_eh adds `round => limit`, which it does when an
+     * assignment that every theory accepts sets a disabled guard to true: the
+     * search then needs an unfolding below the cutoff, and the limit applies
+     * to every disabled guard for the rest of the round.
+     *
+     * Asserting `round_k => ~guard` up front, and assuming `~guard` in later
+     * rounds, makes whatever the base cases imply (such as a bound `n <= 2`
+     * on the recursion argument) a consequence of the limit before the search
+     * starts. A refutation that uses such a consequence puts the limit into
+     * the unsat core although a refutation without it exists, and the solver
+     * then unfolds deeper without end.
      */
     void theory_recfun::disable_guard(expr* guard, expr_ref_vector const& guards) {
         SASSERT(!is_enabled_guard(guard));
-        expr_ref_vector core(m);
-        core.push_back(m_util.mk_num_rounds_pred(m_num_rounds));
-        core.push_back(guard);
         if (!m_guard2pending.contains(guard)) {
             m_disabled_guards.push_back(guard);
             m_guard2pending.insert(guard, alloc(expr_ref_vector, guards));
+            expr* assumption = m.mk_fresh_const("recfun-guard", m.mk_bool_sort());
+            m_assumptions.push_back(assumption);
+            m_guard2assumption.insert(guard, assumption);
+            m_assumption2guard.insert(assumption, guard);
         }
+        expr_ref_vector core(m);
+        core.push_back(limit());
+        core.push_back(m_util.mk_num_rounds_pred(m_num_rounds));
+        core.push_back(guard);
         TRACEFN("add core: " << core);
         push_core(core);
     }
@@ -214,6 +256,9 @@ namespace smt {
         expr* e = ctx.bool_var2expr(v);
         if (is_true && u().is_case_pred(e)) {
             TRACEFN("assign_case_pred_true " << v << " " << mk_pp(e, m));
+            // a disabled guard has no body: final_check_last_eh applies the limit.
+            if (is_disabled_guard(e))
+                return;
             // body-expand
             push_body_expand(e);
         }
@@ -431,19 +476,36 @@ namespace smt {
         return FC_DONE;
     }
 
+    /**
+     * The assignment is accepted by every theory. If it sets a disabled guard
+     * to true, it relies on an unfolding below the current cutoff:
+     * add the clause `round => limit`. See disable_guard.
+     */
+    final_check_status theory_recfun::final_check_last_eh() {
+        for (expr* g : m_disabled_guards) {
+            if (!ctx.b_internalized(g) || ctx.get_assignment(ctx.get_literal(g)) != l_true)
+                continue;
+            app_ref dlimit = m_util.mk_num_rounds_pred(m_num_rounds);
+            TRACEFN("apply the depth limit: " << mk_pp(g, m));
+            ctx.mk_th_axiom(get_id(), ~mk_literal(dlimit), mk_literal(limit()));
+            return FC_CONTINUE;
+        }
+        return FC_DONE;
+    }
+
     void theory_recfun::add_theory_assumptions(expr_ref_vector & assumptions) {
         if (u().has_rec_defs() || !m_disabled_guards.empty()) {
             app_ref dlimit = m_util.mk_num_rounds_pred(m_num_rounds);
             TRACEFN("add_theory_assumption " << dlimit);
             assumptions.push_back(std::move(dlimit));
             for (expr* e : m_disabled_guards)
-                assumptions.push_back(m.mk_not(e));
+                assumptions.push_back(m_guard2assumption[e]);
         }
     }
 
     /**
-     * if `dlimit` or a disabled guard occurs in unsat core, return 'true' and
-     * enable guards for the next round.
+     * if `dlimit` or the assumption of a disabled guard occurs in the unsat
+     * core, return 'true' and enable guards for the next round.
      *
      * Every disabled guard named by the core blocked the refutation of the
      * current round, so all of them are enabled at once: enabling one guard per
@@ -452,15 +514,16 @@ namespace smt {
      * lists and nested datatypes).
      *
      * When the core names no guard (the conflict used the clause
-     * `round_k => ~guard` of a guard disabled during this round, which is not
-     * yet an assumption), the most recently disabled guard is enabled, as before.
+     * `limit & round_k => ~guard` of a guard disabled during this round, which
+     * has no assumption yet), the most recently disabled guard is enabled, as
+     * before.
      */
     bool theory_recfun::should_research(expr_ref_vector & unsat_core) {
         bool found = false;
         ptr_vector<expr> to_enable;
         for (auto * ne : unsat_core) {
             expr* e = nullptr;
-            if (m.is_not(ne, e) && is_disabled_guard(e)) {
+            if (m_assumption2guard.find(ne, e) && is_disabled_guard(e)) {
                 found = true;
                 to_enable.push_back(e);
             }
@@ -481,6 +544,15 @@ namespace smt {
             IF_VERBOSE(2, verbose_stream() << "(smt.recfun :increment-round " << m_num_rounds << ")\n");
         for (expr* g : m_enabled_guards)
             push_guard(g);
+        // the clauses with `round_k` are spent: the guards that stay disabled
+        // are limited through their assumptions.
+        for (expr* g : m_disabled_guards) {
+            expr_ref_vector core(m);
+            core.push_back(limit());
+            core.push_back(m_guard2assumption[g]);
+            core.push_back(g);
+            push_core(core);
+        }
         TRACEFN("should research " << found);
         return true;
     }
