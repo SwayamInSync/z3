@@ -699,6 +699,9 @@ namespace euf {
         if (cont)
             return sat::check_result::CR_CONTINUE;
         TRACE(after_search, s().display(tout););
+        for (auto* e : m_solvers)
+            if (e->check_last() == sat::check_result::CR_CONTINUE)
+                return sat::check_result::CR_CONTINUE;
         if (give_up)
             return sat::check_result::CR_GIVEUP;  
         if (m_qsolver && m_config.m_arith_ignore_int)

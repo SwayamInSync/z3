@@ -145,6 +145,13 @@ namespace euf {
 
         virtual void set_bounds(enode* n) {}
 
+        /**
+           \brief Called when every solver accepts the current assignment.
+           A solver that only wants to exclude candidate models adds its
+           clauses here and returns CR_CONTINUE.
+        */
+        virtual sat::check_result check_last() { return sat::check_result::CR_DONE; }
+
         virtual void finalize() {}
 
         virtual void initialize_value(expr* v, expr* value) { IF_VERBOSE(5, verbose_stream() << "value initialzation is not supported for theory\n"); }
