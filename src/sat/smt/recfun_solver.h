@@ -41,13 +41,19 @@ namespace recfun {
         stats                   m_stats;
 
         // book-keeping for depth of predicates
-        expr_ref_vector          m_disabled_guards;
-        expr_ref                 m_limit;           // the depth limit applies to the disabled guards
-        expr_ref_vector          m_assumptions;     // one assumption per guard disabled in an earlier round
+        expr_ref_vector          m_disabled_guards; // in the order they were disabled
+        obj_hashtable<expr>      m_disabled;        // the same guards, for membership tests
+        expr_ref_vector          m_enabled_guards;
+        obj_hashtable<expr>      m_enabled;
+        expr_ref_vector          m_assumptions;     // one depth-limit predicate per guard ever disabled
         obj_map<expr, expr*>     m_guard2assumption;
         obj_map<expr, expr*>     m_assumption2guard;
-        expr_ref_vector          m_enabled_guards;
-        obj_map<expr, expr_ref_vector*> m_guard2pending;
+        obj_hashtable<expr>      m_assumed;         // disabled guards whose predicate the current round assumes
+        expr_ref_vector          m_certain;         // disabled guards true without a decision when the round applied the limit
+        expr_ref_vector          m_owed;            // guards assigned true while disabled (scoped with the assignment)
+        obj_hashtable<expr>      m_bodied;          // guards whose body is queued (scoped with the queue entry)
+        obj_hashtable<expr>      m_retired;         // predicates of enabled guards asserted false (scoped)
+        expr*                    m_limited = nullptr; // the last guard that appeared in the current round while the limit was on
         obj_map<expr, unsigned>  m_pred_depth;
         expr_ref_vector          m_preds;
         unsigned_vector          m_preds_lim;
@@ -58,12 +64,11 @@ namespace recfun {
 
         void push_body_expand(expr* e) { push_prop(alloc(propagation_item, alloc(body_expansion, u(), to_app(e)))); }
         void push_case_expand(expr* e) { push_prop(alloc(propagation_item, alloc(case_expansion, u(), to_app(e)))); }
-        void push_guard(expr* e) { push_prop(alloc(propagation_item, e)); }
         void push_c(expr_ref_vector const& core) { push_prop(alloc(propagation_item, core)); }
         void push_prop(propagation_item* p);
 
-        bool is_enabled_guard(expr* guard) { return m_enabled_guards.contains(guard); }
-        bool is_disabled_guard(expr* guard) { return m_disabled_guards.contains(guard); }
+        bool is_enabled_guard(expr* guard) { return m_enabled.contains(guard); }
+        bool is_disabled_guard(expr* guard) { return m_disabled.contains(guard); }
 
         recfun::util & u() const { return m_util; }
         bool is_defined(expr * f) const { return u().is_defined(f); }
@@ -79,8 +84,14 @@ namespace recfun {
         void assert_body_axiom(body_expansion & e);
         void assert_guard(expr* guard, expr_ref_vector const& guards);
         void block_core(expr_ref_vector const& core);
-        void disable_guard(expr* guard, expr_ref_vector const& guards);
-        expr* limit();
+        void disable_guard(expr* guard);
+        void enable_guard(expr* guard);
+        void expand_body(expr* guard);
+        bool has_definition(expr* guard) const;
+        bool holds(expr* e);
+        app_ref limit() { return m_util.mk_depth_limit_pred(0); }
+        app_ref round() { return m_util.mk_num_rounds_pred(m_num_rounds); }
+        expr_ref limit_of(expr* guard);
         
         bool is_standard_order(recfun::vars const& vars) const { 
             return vars.empty() || vars[vars.size()-1]->get_idx() == 0;
