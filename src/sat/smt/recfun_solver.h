@@ -42,6 +42,10 @@ namespace recfun {
 
         // book-keeping for depth of predicates
         expr_ref_vector          m_disabled_guards;
+        expr_ref                 m_limit;           // the depth limit applies to the disabled guards
+        expr_ref_vector          m_assumptions;     // one assumption per guard disabled in an earlier round
+        obj_map<expr, expr*>     m_guard2assumption;
+        obj_map<expr, expr*>     m_assumption2guard;
         expr_ref_vector          m_enabled_guards;
         obj_map<expr, expr_ref_vector*> m_guard2pending;
         obj_map<expr, unsigned>  m_pred_depth;
@@ -76,6 +80,7 @@ namespace recfun {
         void assert_guard(expr* guard, expr_ref_vector const& guards);
         void block_core(expr_ref_vector const& core);
         void disable_guard(expr* guard, expr_ref_vector const& guards);
+        expr* limit();
         
         bool is_standard_order(recfun::vars const& vars) const { 
             return vars.empty() || vars[vars.size()-1]->get_idx() == 0;
@@ -95,6 +100,7 @@ namespace recfun {
         void get_antecedents(sat::literal l, sat::ext_justification_idx idx, sat::literal_vector& r, bool probing) override;
         void asserted(sat::literal l) override;
         sat::check_result check() override;
+        sat::check_result check_last() override;
         std::ostream& display(std::ostream& out) const override;
         std::ostream& display_justification(std::ostream& out, sat::ext_justification_idx idx) const override { return display_constraint(out, idx); }
         std::ostream& display_constraint(std::ostream& out, sat::ext_constraint_idx idx) const override { return out; }

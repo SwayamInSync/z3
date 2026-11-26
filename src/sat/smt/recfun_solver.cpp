@@ -31,6 +31,8 @@ namespace recfun {
         m_plugin(*reinterpret_cast<recfun::decl::plugin*>(m.get_plugin(ctx.get_manager().mk_family_id("recfun")))),
         m_util(m_plugin.u()), 
         m_disabled_guards(m),
+        m_limit(m),
+        m_assumptions(m),
         m_enabled_guards(m),
         m_preds(m) {
     }    
@@ -42,6 +44,10 @@ namespace recfun {
     void solver::reset() {
         m_stats.reset();
         m_disabled_guards.reset();
+        m_limit = nullptr;
+        m_assumptions.reset();
+        m_guard2assumption.reset();
+        m_assumption2guard.reset();
         m_enabled_guards.reset();
         m_propagation_queue.reset();
         for (auto & kv : m_guard2pending) 
@@ -133,19 +139,38 @@ namespace recfun {
         add_clause(clause);
     }
 
+    expr* solver::limit() {
+        if (!m_limit) {
+            m_limit = m.mk_fresh_const("recfun-limit", m.mk_bool_sort());
+            // prefer the search that does not use the limit.
+            s().set_phase(~mk_literal(m_limit));
+        }
+        return m_limit;
+    }
+
     /**
-     * make clause `depth_limit => ~guard`
-     * the guard appears at a depth below the current cutoff.
+     * the guard appears at a depth below the current cutoff: it gets neither
+     * its definition nor a body.
+     *
+     * The depth limit is lazy: the clause `limit & round_k => ~guard` takes
+     * effect when check_last adds `round => limit`, which it does when an
+     * assignment that every solver accepts sets a disabled guard to true.
+     * See theory_recfun::disable_guard.
      */
     void solver::disable_guard(expr* guard, expr_ref_vector const& guards) {
         SASSERT(!is_enabled_guard(guard));
-        expr_ref_vector core(m);
-        core.push_back(m_util.mk_num_rounds_pred(m_num_rounds));
-        core.push_back(guard);
         if (!m_guard2pending.contains(guard)) {
             m_disabled_guards.push_back(guard);
             m_guard2pending.insert(guard, alloc(expr_ref_vector, guards));
+            expr* assumption = m.mk_fresh_const("recfun-guard", m.mk_bool_sort());
+            m_assumptions.push_back(assumption);
+            m_guard2assumption.insert(guard, assumption);
+            m_assumption2guard.insert(assumption, guard);
         }
+        expr_ref_vector core(m);
+        core.push_back(limit());
+        core.push_back(m_util.mk_num_rounds_pred(m_num_rounds));
+        core.push_back(guard);
         TRACEFN("add clause\n" << core);
         push_c(core);
     }
@@ -185,11 +210,29 @@ namespace recfun {
 
     void solver::asserted(sat::literal l) {
         expr* e = ctx.bool_var2expr(l.var());
-        if (!l.sign() && u().is_case_pred(e)) 
+        // a disabled guard has no body: check_last applies the limit.
+        if (!l.sign() && u().is_case_pred(e) && !is_disabled_guard(e))
             push_body_expand(e);
     }
 
     sat::check_result solver::check() {
+        return sat::check_result::CR_DONE;
+    }
+
+    /**
+     * The assignment is accepted by every solver. If it sets a disabled guard
+     * to true, it relies on an unfolding below the current cutoff:
+     * add the clause `round => limit`. See disable_guard.
+     */
+    sat::check_result solver::check_last() {
+        for (expr* g : m_disabled_guards) {
+            if (s().value(mk_literal(g)) != l_true)
+                continue;
+            app_ref dlimit = m_util.mk_num_rounds_pred(m_num_rounds);
+            TRACEFN("apply the depth limit\n" << mk_pp(g, m));
+            add_clause(~mk_literal(dlimit), mk_literal(limit()));
+            return sat::check_result::CR_CONTINUE;
+        }
         return sat::check_result::CR_DONE;
     }
 
@@ -215,8 +258,12 @@ namespace recfun {
         // Yield to the context's resource checks before processing newly queued expansions.
         for (unsigned end = m_propagation_queue.size(); m_qhead < end && !s().inconsistent(); ++m_qhead) {
             auto& p = *m_propagation_queue[m_qhead];
-            if (p.is_guard()) 
+            if (p.is_guard()) {
                 assert_guard(p.guard(), *m_guard2pending[p.guard()]);
+                // the guard got no body if it was assigned while it was disabled.
+                if (s().value(mk_literal(p.guard())) == l_true)
+                    push_body_expand(p.guard());
+            }
             else if (p.is_core()) 
                 block_core(p.core());
             else if (p.is_case()) 
@@ -288,13 +335,22 @@ namespace recfun {
             assumptions.insert(assumption);
             s().assign_scoped(assumption);
             for (auto g : m_disabled_guards) {
-                assumption = ~mk_literal(g);
+                assumption = mk_literal(m_guard2assumption[g]);
                 assumptions.insert(assumption);
                 s().assign_scoped(assumption);
             }
         }
         for (expr* g : m_enabled_guards)
             push_guard(g);
+        // the clauses with `round_k` are spent: the guards that stay disabled
+        // are limited through their assumptions.
+        for (expr* g : m_disabled_guards) {
+            expr_ref_vector core(m);
+            core.push_back(limit());
+            core.push_back(m_guard2assumption[g]);
+            core.push_back(g);
+            push_c(core);
+        }
     }
     
     // see theory_recfun::should_research
@@ -303,9 +359,10 @@ namespace recfun {
         ptr_vector<expr> to_enable;
         for (sat::literal lit : core) {
             expr* e = ctx.bool_var2expr(lit.var());
-            if (lit.sign() && is_disabled_guard(e)) {
+            expr* g = nullptr;
+            if (!lit.sign() && e && m_assumption2guard.find(e, g) && is_disabled_guard(g)) {
                 found = true;
-                to_enable.push_back(e);
+                to_enable.push_back(g);
             }
             else if (u().is_num_rounds(e)) 
                 found = true;
