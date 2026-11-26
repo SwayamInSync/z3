@@ -2630,16 +2630,18 @@ namespace smt {
     mf::instantiation_set const* model_finder::get_uvar_inst_set(quantifier* q, unsigned i) {
         quantifier* flat_q = get_flat_quantifier(q);
         SASSERT(flat_q->get_num_decls() >= q->get_num_decls());
-        mf::instantiation_set const* r = m_auf_solver->get_uvar_inst_set(flat_q, flat_q->get_num_decls() - q->get_num_decls() + i);
+        // The variables of q come first in flat_q, so the variables of the nested quantifiers have the lower indices.
+        unsigned flat_i = flat_q->get_num_decls() - q->get_num_decls() + i;
+        mf::instantiation_set const* r = m_auf_solver->get_uvar_inst_set(flat_q, flat_i);
         TRACE(model_finder, tout << "q: #" << q->get_id() << "\n" << mk_pp(q, m) << "\nflat_q: " << mk_pp(flat_q, m)
-            << "\ni: " << i << " " << flat_q->get_num_decls() - q->get_num_decls() + i << "\n";);
+            << "\ni: " << i << " " << flat_i << "\n";);
         if (r != nullptr)
             return r;
         // quantifier was not processed by AUF solver...
         // it must have been satisfied by "macro"/"hint".
         quantifier_info* qinfo = get_quantifier_info(q);
         SASSERT(qinfo);
-        return qinfo->get_macro_based_inst_set(i, m_context, *(m_auf_solver.get()));
+        return qinfo->get_macro_based_inst_set(flat_i, m_context, *(m_auf_solver.get()));
     }
 
     /**
@@ -2679,11 +2681,11 @@ namespace smt {
         // Since we only care about q (and its bindings), it only makes sense to restrict the variables of q.
         bool asserted_something = false;
         unsigned num_decls = q->get_num_decls();
-        // Remark: sks were created for the flat version of q.  
+        // Remark: sks were created for the flat version of q, whose first declarations are those of q.
         SASSERT(get_flat_quantifier(q)->get_num_decls() == sks.size());
         SASSERT(sks.size() >= num_decls);
         for (unsigned i = 0; i < num_decls; ++i) {
-            expr *sk = sks.get(sks.size() - i - 1);
+            expr *sk = sks.get(num_decls - i - 1);
             instantiation_set const* s = get_uvar_inst_set(q, i);
             if (s == nullptr)
                 continue; // nothing to do
