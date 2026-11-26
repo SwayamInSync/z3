@@ -146,9 +146,10 @@ namespace euf {
         virtual void set_bounds(enode* n) {}
 
         /**
-           \brief Called when every solver accepts the current assignment.
-           A solver that only wants to exclude candidate models adds its
-           clauses here and returns CR_CONTINUE.
+           \brief Called at the end of a final check in which no theory solver
+           asked to continue, before the quantifier solver evaluates the
+           assignment. A solver that wants to exclude the assignment as a model
+           adds clauses that the assignment violates and returns CR_CONTINUE.
         */
         virtual sat::check_result check_last() { return sat::check_result::CR_DONE; }
 
