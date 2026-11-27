@@ -692,11 +692,6 @@ namespace euf {
             return sat::check_result::CR_CONTINUE;
         if (cont)
             return sat::check_result::CR_CONTINUE;
-        // Before the quantifier solver evaluates the assignment as a model,
-        // let the theory solvers exclude it.
-        for (auto* e : m_solvers)
-            if (e->check_last() == sat::check_result::CR_CONTINUE)
-                return sat::check_result::CR_CONTINUE;
         if (m_qsolver && !m_config.m_arith_ignore_int)
             apply_solver(m_qsolver);
         if (num_nodes < m_egraph.num_nodes()) 

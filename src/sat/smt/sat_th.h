@@ -145,14 +145,6 @@ namespace euf {
 
         virtual void set_bounds(enode* n) {}
 
-        /**
-           \brief Called at the end of a final check in which no theory solver
-           asked to continue, before the quantifier solver evaluates the
-           assignment. A solver that wants to exclude the assignment as a model
-           adds clauses that the assignment violates and returns CR_CONTINUE.
-        */
-        virtual sat::check_result check_last() { return sat::check_result::CR_DONE; }
-
         virtual void finalize() {}
 
         virtual void initialize_value(expr* v, expr* value) { IF_VERBOSE(5, verbose_stream() << "value initialzation is not supported for theory\n"); }
