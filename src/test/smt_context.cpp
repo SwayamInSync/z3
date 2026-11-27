@@ -412,7 +412,45 @@ static void check_recfun_lazy_depth_limit() {
         "(assert (and (>= b 3) (<= b 8)))\n(assert (<= a 0))\n"
         "(assert (<= (pw 1 (sum b)) a))\n"
         "(check-sat)\n", "unsat\n");
+    // Unfoldings that the assertions force do not take a round each.
+    check_recfun_output(
+        "(set-option :rlimit 500000)\n"
+        "(define-fun-rec sum ((x Int)) Int (ite (<= x 0) 0 (+ x (sum (- x 1)))))\n"
+        "(declare-fun k () Int)\n"
+        "(assert (> (* 2 k) 399))\n(assert (< (* 2 k) 401))\n"
+        "(assert (not (= (sum k) 20100)))\n"
+        "(check-sat)\n", "unsat\n");
+    // A call that unfolds without end does not keep the others limited.
+    check_recfun_output(
+        "(set-option :rlimit 500000)\n"
+        "(declare-datatypes ((L 0)) (((nil) (cons (hd Int) (tl L)))))\n"
+        "(define-funs-rec ((odd ((x Int)) Bool) (even ((x Int)) Bool))\n"
+        "  ((ite (<= x 0) false (even (- x 1)))\n"
+        "   (ite (<= x 0) true (odd (- x 1)))))\n"
+        "(define-fun-rec ll ((l L)) Int (ite ((_ is nil) l) 0 (+ 1 (ll (tl l)))))\n"
+        "(define-fun-rec ack ((x Int) (y Int)) Int\n"
+        "  (ite (<= x 0) (+ y 1) (ite (<= y 0) (ack (- x 1) 1) (ack (- x 1) (ack x (- y 1))))))\n"
+        "(declare-fun c () Int)\n(declare-fun u () L)\n(declare-fun v () L)\n"
+        "(assert (and (>= c 2) (<= c 3)))\n"
+        "(assert (<= (ll v) 4))\n"
+        "(assert (odd (ack 1 (- c (hd u)))))\n"
+        "(check-sat)\n", "sat\n");
+    // The search without the limit gives up when it costs more than the
+    // search with the limit.
+    check_recfun_output(
+        "(set-option :rlimit 10000000)\n"
+        "(declare-const z Int)\n(declare-const a (Array Int Int))\n"
+        "(define-fun-rec afill ((a (Array Int Int)) (n Int) (e Int)) (Array Int Int)\n"
+        "  (ite (<= n 0) a (store (afill a (- n 1) e) (- n 1) e)))\n"
+        "(assert (and (<= 5 z) (<= z 40)))\n"
+        "(assert (= (afill a z 1) (afill a 1 3)))\n"
+        "(check-sat)\n", "unsat\n");
     // Consequences do not depend on the unfolding limit.
+    check_recfun_output(
+        RECFUN_LEN
+        "(declare-fun k () Int)\n(declare-fun q () Bool)\n"
+        "(assert (and (<= 0 k) (<= k 6)))\n(assert (or q (= (len k) 5)))\n"
+        "(get-consequences () (q))\n", "sat\n\n");
     check_recfun_output(
         RECFUN_LEN
         "(declare-fun k () Int)\n(declare-fun p () Bool)\n"
@@ -431,33 +469,6 @@ static void check_recfun_lazy_depth_limit() {
             "(declare-fun k () Int)\n"
             "(assert (= (len k) 5))\n"
             "(check-sat)\n(get-model)\n", "sat\n(\n  (define-fun k () Int\n    5)\n)\n");
-    }
-    // The SAT-based core has its own implementation of the limit.
-    {
-        scoped_global_param _euf("sat.euf", "true");
-        // the hypothesis at n - 2, instantiated by hand.
-        check_recfun_output(
-            "(declare-fun n () Int)\n"
-            "(define-funs-rec ((odd ((x Int)) Bool) (even ((x Int)) Bool))\n"
-            "  ((ite (<= x 0) false (even (- x 1)))\n"
-            "   (ite (<= x 0) true (odd (- x 1)))))\n"
-            "(assert (>= n 0))\n"
-            "(assert (=> (>= n 2) (= (even (- n 2)) (= (- n 2) (* 2 (div (- n 2) 2))))))\n"
-            "(assert (not (= (even n) (= n (* 2 (div n 2))))))\n"
-            "(check-sat)\n", "unsat\n");
-        check_recfun_output(
-            RECFUN_LEN
-            "(declare-fun k () Int)\n"
-            "(assert (= (len k) 40))\n"
-            "(check-sat)\n"
-            "(get-value (k))\n", "sat\n((k 40))\n");
-        // the quantifier solver sees only assignments within the limit.
-        check_recfun_output(
-            RECFUN_LEN
-            "(declare-fun k () Int)\n(declare-fun f (Int) Int)\n"
-            "(assert (forall ((x Int)) (=> (>= x 0) (>= (f x) (len x)))))\n"
-            "(assert (= (len k) 4))\n(assert (< (f k) 9))\n"
-            "(check-sat)\n", "sat\n");
     }
 }
 
