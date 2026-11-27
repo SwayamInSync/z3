@@ -440,7 +440,6 @@ namespace recfun {
         void plugin::get_op_names(svector<builtin_name> & op_names, symbol const & logic) {
             op_names.push_back(builtin_name("case-def", OP_FUN_CASE_PRED));
             op_names.push_back(builtin_name("recfun-num-rounds", OP_NUM_ROUNDS));
-            op_names.push_back(builtin_name("recfun-depth-limit", OP_DEPTH_LIMIT));
         }
 
 
