@@ -1681,8 +1681,6 @@ namespace smt {
         typedef hashtable<unsigned, u_hash, u_eq> index_set;
         //typedef uint_set index_set;
         u_map<index_set> m_antecedents;
-        index_set        m_theory_assumption_vars; // assumptions a theory added to a consequence search
-        ptr_vector<expr> m_conseq_unknown;         // such assumptions that fix a variable still open
         obj_map<expr, expr*> m_var2orig;
         u_map<expr*> m_assumption2orig;
         obj_map<expr, expr*> m_var2val;
@@ -1705,8 +1703,6 @@ namespace smt {
 
         bool validate_justification(bool_var v, bool_var_data const& d, b_justification const& j);
 
-        bool depends_on_theory_assumptions(index_set const& s) const;
-        void add_theory_core(index_set const& s);
         void justify(literal lit, index_set& s);
 
         void extract_cores(expr_ref_vector const& asms, vector<expr_ref_vector>& cores, unsigned& min_core_size);
