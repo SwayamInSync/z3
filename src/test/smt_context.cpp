@@ -343,6 +343,135 @@ static void check_recfun_unfold_limit() {
         "(f 0)\n");
 }
 
+struct scoped_global_param {
+    char const* m_name;
+    std::string m_old;
+    scoped_global_param(char const* name, char const* value): m_name(name), m_old(gparams::get_value(name)) {
+        gparams::set(name, value);
+    }
+    ~scoped_global_param() {
+        gparams::set(m_name, m_old.c_str());
+    }
+};
+
+#define RECFUN_LEN "(define-fun-rec len ((x Int)) Int (ite (<= x 0) 0 (+ 1 (len (- x 1)))))\n"
+
+static void check_recfun_lazy_depth_limit() {
+    // a check that goes wrong ends as unknown, not as a hang.
+    scoped_global_param _timeout("timeout", "20000");
+
+    // The claim follows from the induction hypothesis at n - 2 by parity.
+    // The depth limit on (even (- n 2)) implies n <= 2. A refutation that
+    // uses this bound names the limit in the unsat core, and the solver
+    // unfolds deeper in every round without end.
+    check_recfun_output(
+        "(declare-fun n () Int)\n"
+        "(define-funs-rec ((odd ((x Int)) Bool) (even ((x Int)) Bool))\n"
+        "  ((ite (<= x 0) false (even (- x 1)))\n"
+        "   (ite (<= x 0) true (odd (- x 1)))))\n"
+        "(assert (>= n 0))\n"
+        "(assert (forall ((k Int)) (=> (and (>= k 0) (< k n)) (= (even k) (= k (* 2 (div k 2)))))))\n"
+        "(assert (not (= (even n) (= n (* 2 (div n 2))))))\n"
+        "(check-sat)\n", "unsat\n");
+    // A model that needs unfoldings below the cutoff is still found.
+    check_recfun_output(
+        RECFUN_LEN
+        "(declare-fun k () Int)\n"
+        "(assert (= (len k) 40))\n"
+        "(check-sat)\n"
+        "(get-value (k))\n", "sat\n((k 40))\n");
+    // A guard that is true at an outer scope while it is disabled gets its
+    // body in every scope in which it is enabled, also after a pop.
+    check_recfun_output(
+        RECFUN_LEN
+        "(declare-fun b () Int)\n"
+        "(assert (and (>= b 2) (<= b 4)))\n"
+        "(assert (= (len b) 0))\n"
+        "(push)\n(check-sat)\n(pop)\n"
+        "(check-sat)\n", "unsat\nunsat\n");
+    // The limit clauses of an outer guard are in place again after a pop.
+    check_recfun_output(
+        RECFUN_LEN
+        "(declare-fun k () Int)\n(declare-fun j () Int)\n"
+        "(assert (>= (len k) 0))\n"
+        "(push)\n(assert (= (len j) 2))\n(check-sat)\n(pop)\n"
+        "(push)\n(assert (> k 0))\n(check-sat)\n(pop)\n", "sat\nsat\n");
+    // A guard that a learned clause makes true after its limit clause is gone
+    // is still rejected with a violated clause.
+    check_recfun_output(
+        RECFUN_LEN
+        "(declare-fun a () Int)\n"
+        "(assert (and (>= a 0) (<= a 2)))\n"
+        "(assert (or (>= (len a) (len (len (len a)))) (not (= (len (- (len a) (+ a -2))) a))))\n"
+        "(check-sat)\n", "sat\n");
+    // The guard that the rejected assignment relies on is the one enabled.
+    check_recfun_output(
+        "(define-fun-rec sum ((x Int)) Int (ite (<= x 0) 0 (+ x (sum (- x 1)))))\n"
+        "(define-fun-rec pw ((x Int) (y Int)) Int (ite (<= y 0) 1 (* x (pw x (- y 1)))))\n"
+        "(declare-fun a () Int)\n(declare-fun b () Int)\n"
+        "(assert (and (>= b 3) (<= b 8)))\n(assert (<= a 0))\n"
+        "(assert (<= (pw 1 (sum b)) a))\n"
+        "(check-sat)\n", "unsat\n");
+    // Unfoldings that the assertions force do not take a round each.
+    check_recfun_output(
+        "(set-option :rlimit 500000)\n"
+        "(define-fun-rec sum ((x Int)) Int (ite (<= x 0) 0 (+ x (sum (- x 1)))))\n"
+        "(declare-fun k () Int)\n"
+        "(assert (> (* 2 k) 399))\n(assert (< (* 2 k) 401))\n"
+        "(assert (not (= (sum k) 20100)))\n"
+        "(check-sat)\n", "unsat\n");
+    // A call that unfolds without end does not keep the others limited.
+    check_recfun_output(
+        "(set-option :rlimit 500000)\n"
+        "(declare-datatypes ((L 0)) (((nil) (cons (hd Int) (tl L)))))\n"
+        "(define-funs-rec ((odd ((x Int)) Bool) (even ((x Int)) Bool))\n"
+        "  ((ite (<= x 0) false (even (- x 1)))\n"
+        "   (ite (<= x 0) true (odd (- x 1)))))\n"
+        "(define-fun-rec ll ((l L)) Int (ite ((_ is nil) l) 0 (+ 1 (ll (tl l)))))\n"
+        "(define-fun-rec ack ((x Int) (y Int)) Int\n"
+        "  (ite (<= x 0) (+ y 1) (ite (<= y 0) (ack (- x 1) 1) (ack (- x 1) (ack x (- y 1))))))\n"
+        "(declare-fun c () Int)\n(declare-fun u () L)\n(declare-fun v () L)\n"
+        "(assert (and (>= c 2) (<= c 3)))\n"
+        "(assert (<= (ll v) 4))\n"
+        "(assert (odd (ack 1 (- c (hd u)))))\n"
+        "(check-sat)\n", "sat\n");
+    // The search without the limit gives up when it costs more than the
+    // search with the limit.
+    check_recfun_output(
+        "(set-option :rlimit 10000000)\n"
+        "(declare-const z Int)\n(declare-const a (Array Int Int))\n"
+        "(define-fun-rec afill ((a (Array Int Int)) (n Int) (e Int)) (Array Int Int)\n"
+        "  (ite (<= n 0) a (store (afill a (- n 1) e) (- n 1) e)))\n"
+        "(assert (and (<= 5 z) (<= z 40)))\n"
+        "(assert (= (afill a z 1) (afill a 1 3)))\n"
+        "(check-sat)\n", "unsat\n");
+    // Consequences do not depend on the unfolding limit.
+    check_recfun_output(
+        RECFUN_LEN
+        "(declare-fun k () Int)\n(declare-fun q () Bool)\n"
+        "(assert (and (<= 0 k) (<= k 6)))\n(assert (or q (= (len k) 5)))\n"
+        "(get-consequences () (q))\n", "sat\n\n");
+    check_recfun_output(
+        RECFUN_LEN
+        "(declare-fun k () Int)\n(declare-fun p () Bool)\n"
+        "(assert (>= (len k) 3))\n(assert (= p (<= k 3)))\n"
+        "(get-consequences () (p))\n", "sat\n\n");
+    check_recfun_output(
+        RECFUN_LEN
+        "(declare-fun k () Int)\n(declare-fun p () Bool)\n"
+        "(assert (and (>= k 0) (<= k 3)))\n(assert (= p (= (len k) k)))\n"
+        "(get-consequences () (p))\n", "sat\n\n(=> true p)\n");
+    // The internal predicates of the limit are not part of a model.
+    {
+        scoped_global_param _compact("model.compact", "false");
+        check_recfun_output(
+            RECFUN_LEN
+            "(declare-fun k () Int)\n"
+            "(assert (= (len k) 5))\n"
+            "(check-sat)\n(get-model)\n", "sat\n(\n  (define-fun k () Int\n    5)\n)\n");
+    }
+}
+
 static void check_qe2_false_answer() {
     // qe2 reports a false answer as false, not as false under re-bound variables.
     check_recfun_output(
@@ -1822,6 +1951,7 @@ void tst_smt_context()
     check_lp_cancellation_recovery();
     check_recfun_rlimits();
     check_recfun_unfold_limit();
+    check_recfun_lazy_depth_limit();
     check_mbqi_division_by_zero();
     check_mbqi_lambda_arrays();
     check_special_relation_logic();

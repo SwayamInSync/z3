@@ -370,19 +370,22 @@ namespace smt {
             }
         }
         unsigned num_units = 0;
-        extract_fixed_consequences(num_units, _assumptions, conseq);
         app_ref eq(m);
-        TRACE(context, 
-              tout << "vars: " << vars.size() << "\n";
-              tout << "lits: " << num_units << "\n";);
         pop_to_base_lvl();
         m_case_split_queue->init_search_eh();
         unsigned num_iterations = 0;
         unsigned num_fixed_eqs = 0;
         unsigned chunk_size = 100; 
 
+        // What is fixed here does not depend on the assumptions that theories
+        // added to the search for the model.
         init_assumptions(assumptions);
-        num_units = 0;
+        if (!propagate())
+            return l_undef;
+        extract_fixed_consequences(num_units, _assumptions, conseq);
+        TRACE(context, 
+              tout << "vars: " << vars.size() << "\n";
+              tout << "lits: " << num_units << "\n";);
 
         while (!m_var2val.empty()) {
             unsigned num_vars = 0;

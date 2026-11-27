@@ -34,7 +34,8 @@ namespace recfun {
     enum op_kind {
         OP_FUN_DEFINED, // defined function with one or more cases, possibly recursive
         OP_FUN_CASE_PRED, // predicate guarding a given control flow path
-        OP_NUM_ROUNDS     // predicate round
+        OP_NUM_ROUNDS,    // predicate round
+        OP_DEPTH_LIMIT    // predicate: the depth limit applies (0), or applies to one guard (> 0)
     };
 
     /*! A predicate `p(t1...tn)`, that, if true, means `f(t1...tn)` is following
@@ -291,6 +292,7 @@ namespace recfun {
         }
 
         app_ref mk_num_rounds_pred(unsigned d);
+        app_ref mk_depth_limit_pred(unsigned i);
 
     };
 

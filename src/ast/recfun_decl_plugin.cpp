@@ -379,6 +379,13 @@ namespace recfun {
         return app_ref(m().mk_const(decl), m());
     }
 
+    app_ref util::mk_depth_limit_pred(unsigned i) {
+        parameter p(i);
+        func_decl_info info(m_fid, OP_DEPTH_LIMIT, 1, &p);
+        func_decl* decl = m().mk_const_decl(symbol("recfun-depth-limit"), m().mk_bool_sort(), info);
+        return app_ref(m().mk_const(decl), m());
+    }
+
     // used to know which `app` are from this theory
     struct is_imm_pred : is_immediate_pred {
         util & u;
@@ -508,6 +515,10 @@ namespace recfun {
                 SASSERT(num_parameters == 1);
                 SASSERT(arity == 0);
                 return m().mk_const_decl(symbol("recfun-num-rounds"), m().mk_bool_sort(), info);                
+            case OP_DEPTH_LIMIT: 
+                SASSERT(num_parameters == 1);
+                SASSERT(arity == 0);
+                return m().mk_const_decl(symbol("recfun-depth-limit"), m().mk_bool_sort(), info);                
             default:
                 break;
             }
