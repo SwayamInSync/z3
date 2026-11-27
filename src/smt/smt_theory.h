@@ -320,18 +320,6 @@ namespace smt {
         }
 
         /**
-           \brief Called at the end of a final check in which no theory and
-           not the quantifier manager asked to continue (some may have given
-           up). Model-based quantifier instantiation runs later, when the
-           search restarts. A theory that wants to exclude the assignment as a
-           model adds constraints that the assignment violates and returns
-           FC_CONTINUE; FC_GIVEUP makes the final check give up.
-        */
-        virtual final_check_status final_check_last_eh() {
-            return FC_DONE;
-        }
-
-        /**
         * \brief This method signals the number of priority levels a theory supports for final checks.
         * The first level are for the cheapest final check invocations.
         * The levels after that are for more expensive final checks.
